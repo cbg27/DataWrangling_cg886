@@ -1,0 +1,493 @@
+---
+title: "Final Project- Mobility During Covid"
+author: "Chandra Bhushan Gupta, 16:954:597:01 DATA WRANGLING"
+output: 
+  html_document:
+    highlight: espresso
+    toc: true
+    toc_depth: 4
+---
+<style type="text/css">
+
+h1.title {
+  font-size: 38px;
+  color: MidnightBlue;
+  text-align: center;
+  font-family: Calibre,Geneva,sans-serif; 
+  text-decoration: underline;
+
+}
+h4.author { /* Header 4 - and the author and data headers use this too  */
+    font-size: 18px;
+  font-family: "Verdana", Times, serif;
+  color: Navy;
+  text-align: center;
+  font-style: italic;
+}
+</style>
+
+#### <span style="color:darkBlue">Project Description</span>
+
+Within months, COVID-19 went from an epidemic to a pandemic. From the first identified case in December 2019 and wide impact visibly considered from March especially in US - there were many precautions and government orders put in place. People and communities have responded differently to such changes/developments especially mobility and transportation. Whilst we are well aware of the widespread usage of the analytics produced by John Hopkins, merging this data with other sources might provide more insight around the efforts being put in flattening the curve. My effort will be to unify the data and source them to put forward summary and stats to get better insights and perspective around all the initiatives - How mobility, stay at home, movement restrictions were perceived. Supplement this data with visualizations to explain the effectiveness around all the efforts. Aim is to get deeper into insights by collating data from various sources, clean them up and perform analysis.
+
+#### <span style="color:darkBlue">Data</span>
+
+In my project, following are the main sources of data
+
+  * _*Google Mobility Data*_ - Data was downloaded from Google in the form of CSV. CSV is available for 2020 and 2021 in different CSV files.
+
+#### <span style="color:darkBlue">Data Definition(Original)</span>
+
+Google Sheet element  | Definition 
+------------- | ------------- 
+sub_region_1  | US State Name 
+retail_and_recreation_percent_change_from_baseline | Retail and Recreation Mobility 
+grocery_and_pharmacy_percent_change_from_baseline | Grocery and Pharmacy Mobility
+parks_percent_change_from_baseline | Parks Mobility
+transit_stations_percent_change_from_baseline | Transit Mobility
+workplaces_percent_change_from_baseline | Workplace Mobility
+residential_percent_change_from_baseline | Residential address Mobility
+date | date of an event
+
+Reference https://www.google.com/covid19/mobility/
+
+    
+  * _*Apple Mobility Data*_ - Apple mobility Data 
+  
+Apple Sheet element  | Definition 
+------------- | ------------- 
+region  | US State Name 
+transportation_type | driving" "walking", "transit" 
+X"YYYY.MM.DD" | Date as a header 
+
+Reference https://covid19.apple.com/mobility
+
+  * _*Covid Now Data*_ - With the help of API key, data was retrieved from Covid Act. It is an independent 501(c)(3) nonprofit founded by volunteers in March 2020.
+  
+API Field  | Definition 
+------------- | ------------- 
+actuals.cases  | Cumulative confirmed or suspected cases 
+metrics.caseDensity | # of cases per 100k population calculated using a 7-day rolling average 
+metrics.infectionRate | R_t, or the estimated number of infections arising from a typical case. 
+actuals.deaths | Cumulative deaths that are suspected or confirmed . 
+actuals.newCases | New confirmed or suspected cases
+metrics.infectionRate | R_t, or the estimated number of infections arising from a typical case.
+
+  * _BTS (Bureau of Transportation)_ Data has been pull with the help of API token from JSON end point from Bureau of Transportation and Statistics. Packcage RSocrata is being used to download the data 
+
+API Field  | Definition 
+------------- | ------------- 
+State.Postal.Code  | State Code
+pop_stay_at_home | Population who stayed Home , persons who make no trips with a trip end more than one mile away from home
+pop_not_stay_at_home | Population not staying at home
+trips | Total Number of Trips made on a day 
+date | Date |
+
+Reference - https://dev.socrata.com/foundry/data.bts.gov/w96p-f2qv
+
+### <span style="color:darkBlue">Packages used in the Project</span>
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)  # all tidyverse packages
+library(tidyr) # Supports tidyverse package
+library(purrr) # Complements tidyverse
+library(stringr) # Supports any  string operations
+library(choroplethr) # package for Choropleths  thematic maps 
+library(choroplethrMaps) # Contains Maps Used by the 'choroplethr' Package
+library(countrycode) # For country code mapping
+library(tidycensus) # To get Census data that is pre-prepared for exploration within the tidyverse
+library(lubridate) # Date handling package
+library(usdata) # used to handle state codes and many others
+library(ggplot2) # Standard ggpplot graph
+library(gridExtra) # To arrange Graph in a Grid  
+library(zoo) # moving averages
+library("RSocrata") #To donwload API Data
+library(hrbrthemes)
+```
+
+###  <span style="color:darkBlue">Data Wrangling</sapn>
+
+
+#### <span style="color:darkBlue">Function</span>
+```{r}
+#### Function to clean up Google sheet data
+google_mobility_func <- function(df){
+  mobility_data_frame <- df %>%
+    filter(sub_region_1 !="") %>%  
+    filter(is.na(census_fips_code) | census_fips_code == 11001) %>%
+    select (date,sub_region_1,ends_with("_baseline")) %>%
+    mutate(event_date= as.Date(date, format = "%Y-%m-%d")) %>%
+    rename(Province_State=sub_region_1) %>%
+    select(-date)
+}
+```
+
+```{r}
+
+##### Get Google Data and Combine them in one sheet
+google_mobility_us_2021 <- google_mobility_func(read.csv("data/2021_US_Region_Mobility_Report.csv"))
+google_mobility_us_2020 <-  google_mobility_func(read.csv("data/2020_US_Region_Mobility_Report.csv"))
+
+google_mobility_us_states  <- rbind(google_mobility_us_2021,  google_mobility_us_2020)
+
+```
+
+#### <span style="color:darkBlue">Apple data set cleaning</span>
+
+Apple mobility data
+  * Filter the United States
+  * Select the Transportation Type
+  * Dates are being defined as column hence used Pivot to convert wide to long
+  * Mutating the transportation type to actions and then again pivoting it back to wide
+  * Pivot again back to wide for different columns 
+
+```{r message=FALSE, warning=FALSE}
+
+apple_mobility <- read.csv("data/applemobilitytrends.csv") %>%
+  filter(country=='United States') %>%
+  filter(sub.region !="") %>%
+  select (sub.region, transportation_type,starts_with("X")) %>%
+  pivot_longer(cols = 3:ncol(.),names_to = "action_date", values_to = "actions")%>%
+  drop_na() %>%
+  mutate(actions = (actions-100)) %>%
+  mutate(event_date =as.Date(parse_date_time(gsub("X", "", action_date),"ymd"))) %>%
+  select(-action_date) %>%
+  group_by(sub.region,transportation_type,event_date) %>%
+  summarise(actions=mean(actions))%>%
+  pivot_wider(names_from = transportation_type, values_from = actions) %>%
+  rename(Province_State=sub.region)
+```
+
+#### <span style="color:darkBlue">Covid Now data</span>
+
+```{r message=FALSE, warning=FALSE}
+covid_data_metrics <- read.csv("https://api.covidactnow.org/v2/states.timeseries.csv?apiKey=4fa5a2a58b3a41cdb8023cc0c5ab1ea8")
+
+covid_data_metrics_refined <- covid_data_metrics %>%
+  mutate(event_date=as.Date(date, format = "%Y-%m-%d"),Province_State=abbr2state(state)) %>%
+  select(event_date,Province_State,actuals.cases, actuals.deaths ,actuals.newDeaths,metrics.caseDensity,metrics.infectionRate) %>%
+  drop_na("Province_State")
+```
+
+#### <span style="color:darkBlue">Transportation Data from BTS </span>
+
+  * Filter the date at State Level
+  * Mutate to append date type column event date
+  * converted US state code to Province State
+  * Select the population staying home, not staying home and number of trips
+  * Group the details at State level and summarized data with mean
+  * Nest the data to summarize the group
+  * Population data is ratio of population by total population within that category. This helped to normalize number
+  * Unnest the date to get individual row
+
+```{r message=FALSE, warning=FALSE}
+
+transportation_data <- read.socrata(
+  "https://data.bts.gov/resource/w96p-f2qv.json?level=State",
+  app_token = "ejkHyMHa8hKGhqxanhfhiONBq",
+  email     = "bhushangupta19@gmail.com",
+  password  = "Rutgers@2021"
+)
+
+BTS_transportation_data <- transportation_data %>%
+  mutate(event_date= as.Date(date)) %>%
+  mutate( year=as.numeric(format(event_date, "%y"))) %>%
+  filter(year>19) %>%
+  mutate_at(vars(pop_stay_at_home,pop_not_stay_at_home, trips), as.numeric) %>%
+  select (event_date,state_code,pop_stay_at_home,pop_not_stay_at_home,trips) %>%
+  arrange(state_code,event_date) %>%
+  mutate(state_name=abbr2state(state_code))  %>%
+  rename(Province_State=state_name)
+ 
+BTS_transportation_data_by_date <- BTS_transportation_data %>%
+  group_by(event_date) %>%
+  summarise(pop_stay_at_home= mean(pop_stay_at_home),
+           pop_not_stay_at_home=mean(pop_not_stay_at_home),
+           trips=mean(trips))
+ 
+ BTS_data <-  BTS_transportation_data %>%
+   group_by(Province_State)  %>%
+   nest() %>%
+  mutate(mean_pop_home = map_dbl(data, ~mean(.x$pop_stay_at_home)), 
+         mean_pop_not_home = map_dbl(data, ~mean(.x$pop_not_stay_at_home)),
+         mean_trip = map_dbl(data, ~mean(.x$trips))) %>%
+  unnest(data) %>% 
+  mutate(Staying.at.Home=(pop_stay_at_home/mean_pop_home),
+         Not.Staying.at.Home= ((pop_not_stay_at_home/mean_pop_not_home)),
+         Trips = ((trips/mean_trip))) %>%
+  select(Province_State,event_date,Staying.at.Home, Not.Staying.at.Home,Trips)
+```
+
+
+####  <span style="color:darkBlue">Lets Unify the data</span>
+
+  * Joined the Google, Apple and BTS data with main Covid Data leveraging left join
+  * To reduce noise and smooth time series data, I have further smoothed it up by applying rolling mean
+  * Further cleaned up data by removing redundant fields
+
+```{r message=FALSE, warning=FALSE}
+
+covid_data_with_google <- left_join(covid_data_metrics_refined,google_mobility_us_states, by= c("Province_State" ="Province_State", "event_date"="event_date")) %>%
+  mutate(retail_recreation=zoo::rollmean(retail_and_recreation_percent_change_from_baseline, k = 7, fill = "extend"), 
+         grocery_pharma=zoo::rollmean(grocery_and_pharmacy_percent_change_from_baseline, k = 7, fill = "extend"),
+         transit_g=zoo::rollmean(transit_stations_percent_change_from_baseline, k = 7, fill = "extend"),
+         residential=zoo::rollmean(residential_percent_change_from_baseline, k = 7, fill = "extend"),
+         workplace=zoo::rollmean(workplaces_percent_change_from_baseline, k = 7, fill = "extend"),
+         parks=zoo::rollmean(parks_percent_change_from_baseline, k = 7, fill = "extend")) %>%
+        select (., -c(retail_and_recreation_percent_change_from_baseline,grocery_and_pharmacy_percent_change_from_baseline,transit_stations_percent_change_from_baseline,
+               residential_percent_change_from_baseline,workplaces_percent_change_from_baseline,parks_percent_change_from_baseline))
+
+joined_mobility <- left_join(covid_data_with_google,BTS_data,by= c("Province_State" ="Province_State", "event_date"="event_date")) %>%
+  left_join(.,apple_mobility,by= c("Province_State" ="Province_State", "event_date"="event_date")) %>%
+   mutate(transit=zoo::rollmean(transit, k = 7, fill = "extend"), 
+         walking=zoo::rollmean(walking, k = 7, fill = "extend"),
+         driving=zoo::rollmean(driving, k = 7, fill = "extend"))
+  
+```
+
+###  <span style="color:darkBlue">Data Visualization</span>
+
+#### <span style="color:darkBlue">Overall Movement of people, BTS data<span>
+
+* Visualization around movement of People based on BTS data. 
+
+```{r message=FALSE, warning=FALSE}
+
+ggplot(data=BTS_transportation_data_by_date, aes(x=event_date, y=pop_stay_at_home)) +
+  geom_line(color="#69b3a2", size=1, alpha=0.9)+
+  geom_smooth(se=TRUE)+
+  theme_ipsum() +
+  ggtitle("Population Stayed Home")
+
+ggplot(data=BTS_transportation_data_by_date, aes(x=event_date, y=pop_not_stay_at_home)) +
+  geom_line(color="#DEB887", size=1, alpha=0.9)+
+  geom_smooth(se=TRUE)+
+  theme_ipsum() +
+  ggtitle("Population Not Stayed Home")
+
+ggplot(data=BTS_transportation_data_by_date, aes(x=event_date, y=trips)) +
+ geom_line(color="#008080", size=1, alpha=0.9)+
+  geom_smooth(se=TRUE)+
+  theme_ipsum() +
+  ggtitle("# of Trips")
+
+
+```
+  * This doesnt come as a surprise as trend has been downwards and then started to pick up for folks who did not stay home
+
+
+Top 5 States with Covid cases(Mean) overall (This is to take the vector and do the mobility analysis)
+
+```{r message=FALSE, warning=FALSE}
+topcovid_data_mobility <- joined_mobility%>%
+  group_by(Province_State) %>%
+  summarise(cases=mean(actuals.cases,na.rm = TRUE)) %>%
+  arrange(desc(cases)) %>%
+  head(6) %>%
+  select (Province_State)
+
+mobility_data_top_5 <- joined_mobility %>%
+  filter(Province_State %in% topcovid_data_mobility$Province_State)
+
+```
+
+#### <span style="color:darkBlue">Trend from Google Data for Top States by cases</span>
+```{r message=FALSE, warning=FALSE}
+
+ggplot(mobility_data_top_5, aes(x=event_date)) + 
+  geom_line(aes(y= transit_g,color = "a"))+ facet_wrap(~ Province_State) +
+  labs(x = 'Dates',y='Mobility Index')+
+  ggtitle("Mobility Trends for Top 6 US states by Cases")+
+  geom_line(aes(y = grocery_pharma, color="c")) +
+  geom_line(aes(y = parks, color="d")) +
+  geom_line(aes(y = metrics.caseDensity, color="e")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  geom_hline(yintercept=0,linetype="dashed")+
+  scale_color_discrete(name = "Mobility Types", labels = c("transit_g", "grocery_pharma","parks","Covid Case Density"))
+```
+
+  * It is clearly visible that people's usage of Transportation and Transit have declined over the course of time and now in 2021, it has started to pick up.
+  * When pandemic was at early stages and there were many restrictions, people have shown positive trend towards Parks and Outdoors. Clearly New York and Illinios saw some             decline during cold weather.
+  * Grocery and Pharmaceutical did not see much decline as they were essential commodities.
+
+#### <span style="color:darkBlue">Trend from Google Data for Top States by cases (Cont.)</span>
+```{r message=FALSE, warning=FALSE}
+
+ggplot(mobility_data_top_5, aes(x=event_date)) + 
+  geom_line(aes(y= residential,color = "a"))+ facet_wrap(~ Province_State) +
+  labs(x = 'Dates',y='Mobility Index')+
+  ggtitle("Mobility Trends for Top 6 US states by Cases.(Residentail Vs Workplace)")+
+  geom_line(aes(y = workplace, color="c")) +
+  geom_line(aes(y = metrics.caseDensity, color="e")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  geom_hline(yintercept=0,linetype="dashed")+
+  scale_color_discrete(name = "Mobility Types", labels = c("Residential", "Workplace","Covid Case Density"))
+``` 
+   * Workplace commute has significantly took at hit as most of the offices and businesses were closed and people have explored work from home option, However it has started to     get picked up lately as cases are going down.
+   * Residential mobility was consistent throughout.
+   
+#### <span style="color:darkBlue">Trend from Apple Data for Top States by cases</span>
+```{r message=FALSE, warning=FALSE}
+ggplot(mobility_data_top_5, aes(x=event_date)) + 
+  geom_line(aes(y= transit,color = "a"))+ facet_wrap(~ Province_State) +
+   labs(x = 'Dates',y='Transportaion mode change')+
+  ggtitle("Tranportation Mode Trends")+
+  geom_line(aes(y = walking, color="g")) +
+  geom_line(aes(y = driving, color="d")) +
+  geom_line(aes(y = metrics.caseDensity, color="e")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  geom_hline(yintercept=0,linetype="dashed")+
+  scale_color_discrete(name = "Transporation Mode", labels = c("Public Transport", "Walk","Driving","Covid Case Density"))
+```
+  
+  * Undoubtedly, Apple data has shown the changing habit in Transportation mode as well 
+  * People drove and walked a lot as compared to baseline 
+  
+#### <span style="color:darkBlue">Proportion of Movements and Case Density on Maps<span>
+
+  * In order to prepare the data on to be plotted on StateChoropleth, normalization and explicit mapping of region and value was needed
+  * Divided data into two parts . Early Stages of Pandemic (March - Oct) (Oct-Apr 2021)
+  * More code was needed just to map the data to Maps 
+  * To Normalize the data, I used the scale function for all numeric values. Work was needed on DataFrame to remove row and then putting it back again.
+  
+```{r message=FALSE, warning=FALSE}
+prepare_joined_mobility <- joined_mobility %>%
+  filter(event_date>='2020-03-15') %>%
+  mutate(rowCol=paste(event_date,"#",Province_State)) %>%
+ select(rowCol,metrics.caseDensity, Staying.at.Home,Not.Staying.at.Home,actuals.deaths ,metrics.infectionRate,workplace,
+        retail_recreation,parks,transit_g) 
+
+joined_mobility_normalized <- prepare_joined_mobility %>% 
+  remove_rownames %>% 
+  column_to_rownames(var="rowCol") %>%
+  scale(.)
+
+
+cholor_mobility_df <- tibble::rownames_to_column(as.data.frame(joined_mobility_normalized), "rowCol") %>%
+  separate(rowCol, c("event_date", "Province_State"),"#") %>%
+  mutate_all(trimws) %>%
+  mutate(event_date=as.Date(event_date)) %>%
+  mutate_at(vars(Staying.at.Home,Not.Staying.at.Home, metrics.caseDensity), as.numeric)
+
+cholro_stay_home <- function(df,x,y){
+  df %>%
+  filter(event_date >= x & event_date <= y) %>%
+  group_by(Province_State) %>% 
+  summarise(value = mean(Staying.at.Home, na.rm=TRUE)) %>%
+  mutate(region = tolower(Province_State)) %>%
+  select (region, value)
+}
+
+covid_data_mobility_first_6_i <- cholro_stay_home(cholor_mobility_df,"2020-03-01","2020-09-01")
+covid_data_mobility_next_6_i <- cholro_stay_home(cholor_mobility_df,"2020-09-01","2021-04-01")
+
+cholro_not_stay_home <- function(df,x,y){
+  df %>%
+  filter(event_date >= x & event_date <= y) %>%
+  group_by(Province_State) %>% 
+  summarise(value = mean(Not.Staying.at.Home, na.rm=TRUE)) %>%
+  mutate(region = tolower(Province_State)) %>%
+  select (region, value)    
+}
+
+covid_data_mobility_first_6_o <- cholro_not_stay_home(cholor_mobility_df,"2020-03-01","2020-09-01")
+covid_data_mobility_next_6_o <- cholro_not_stay_home(cholor_mobility_df,"2020-09-01","2021-04-01")
+
+cholro_cases <- function(df,x,y){
+  df %>%
+  filter(event_date >= x & event_date <= y) %>%
+  group_by(Province_State) %>% 
+   summarise(value = mean(metrics.caseDensity, na.rm=TRUE)) %>%
+  mutate(region = tolower(Province_State)) %>%
+  select (region, value)
+}
+
+covid_data_cases_first_6_c <- cholro_cases(cholor_mobility_df,"2020-03-01","2020-09-01")
+covid_data_cases_next_6_c <- cholro_cases(cholor_mobility_df,"2020-09-01","2021-04-01")
+
+
+c = StateChoropleth$new(covid_data_mobility_first_6_i)
+c$title = "Mar20-Oct20 At Home"
+c$set_num_colors(7)
+c$set_zoom(NULL)
+c$show_labels = FALSE
+IndooorMobility2020 = c$render()
+
+c = StateChoropleth$new(covid_data_mobility_next_6_i)
+c$title = "Oct20-Apr21 At Home"
+c$set_num_colors(7)
+c$set_zoom(NULL)
+c$show_labels = FALSE
+IndooorMobility2021 = c$render()
+
+c = StateChoropleth$new(covid_data_mobility_first_6_o)
+c$title = "Mar20-Oct20 At Home"
+c$set_num_colors(7)
+c$set_zoom(NULL)
+c$show_labels = FALSE
+OutdoorMobiility2020 = c$render()
+
+c = StateChoropleth$new(covid_data_mobility_next_6_o)
+c$title = "Oct20-Apr21 At Home"
+c$set_num_colors(7)
+c$set_zoom(NULL)
+c$show_labels = FALSE
+OutdoorMobiility2021 = c$render()
+
+c = StateChoropleth$new(covid_data_cases_first_6_c)
+c$title = "Mar20-Oct20 Case Density"
+c$set_num_colors(7)
+c$set_zoom(NULL)
+c$show_labels = FALSE
+Covid2020 = c$render()
+
+c = StateChoropleth$new(covid_data_cases_next_6_c)
+c$title = "Oct20-Apr21 Case Density"
+c$set_num_colors(7)
+c$set_zoom(NULL)
+c$show_labels = FALSE
+Covid2021 = c$render()
+
+library(gridExtra)
+grid.arrange(IndooorMobility2020, IndooorMobility2021,OutdoorMobiility2020,OutdoorMobiility2021,Covid2020,Covid2021)
+
+```
+
+#### <span style="color:darkBlue">Overall US Mobility against Case Density</span
+
+  * Summarized the data by month and normalized the scale to get the consistency in scale
+
+```{r message=FALSE, warning=FALSE}
+joined_mobility_us <- joined_mobility %>%
+  group_by(month = lubridate::floor_date(event_date, "month")) %>%
+   summarise(metrics.caseDensity=mean(metrics.caseDensity,na.rm = TRUE),
+             parks=mean(parks,na.rm = TRUE),
+             transit_g=mean(transit_g,na.rm = TRUE),
+             Not.Staying.at.Home=mean(Not.Staying.at.Home,na.rm = TRUE)
+             )
+
+covid_norm <- joined_mobility_us %>%   
+  remove_rownames %>%   
+  column_to_rownames(var="month")
+
+covid_norm_data <- scale(covid_norm) 
+
+df <-tibble::rownames_to_column(as.data.frame(covid_norm_data), "event_date") %>%
+  pivot_longer(cols = 2:ncol(.),names_to = "activity", values_to = "activity_index") %>%
+  mutate(event_date= as.Date(event_date, format = "%Y-%m-%d"))
+
+ggplot(df,aes(x=event_date,y = activity_index,color=activity))+
+  geom_line()+  ggtitle("How Cases have unfolded in response to Mobility")+  labs(x = "Dates",y="Activity Index")+
+  theme_ipsum() 
+
+
+```
+  
+### <span style="color:darkBlue">Conclusion</span>
+  
+  We all know that Covid has impacted all wakes of life from all the visualization and post data wrangling, it is much evident that communities have tweaked behavior during peak of COVID times, people refrained from using public transport, preferred more outdoor activities. Workplace mobility was decreased significantly as well. Interestingly residential mobility remained consistent which might be an attribution that people mostly traveled between residential address and grocery or parks. There was not much dip in grocery and pharma which is understandable as demand remained consistent except initial days of COVID. 
+  From apple transportation data, people preferred driving which is unusual for cities with mass transit. 
+  
+### <span style="color:darkBlue">Opportunity</span>
+  
+  This analysis can be merged with Govt. Policies data and additional sources as weather, census , demographic & social media trends to draw decisions and shape further policy programs. Further due diligence of data points will be helpful to attain focus areas to battle such pandemics. 
+  
