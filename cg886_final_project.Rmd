@@ -85,6 +85,18 @@ date | Date |
 
 Reference - https://dev.socrata.com/foundry/data.bts.gov/w96p-f2qv
 
+  * _Covid Govt Response Tracker_ Governments are taking a wide range of measures in response to the COVID-19 outbreak. This data aims to track and compare policy responses around the world.
+
+API Field  | Definition 
+------------- | ------------- 
+RegionName  | Us State Name
+Date | Date of occurance
+ContainmentHealthIndex | combines ‘lockdown’ restrictions and closures with measures such as testing policy and contact tracing
+GovernmentResponseIndex |  how the response of governments has varied over all indicators in the database, becoming stronger or weaker over the course of the outbreak)
+StringencyIndex | the strictness of ‘lockdown style’ policies that primarily restrict people’s behaviour
+
+Reference - https://www.bsg.ox.ac.uk/research/research-projects/covid-19-government-response-tracker
+
 ### <span style="color:darkBlue">Packages used in the Project</span>
 ```{r message=FALSE, warning=FALSE}
 library(tidyverse)  # all tidyverse packages
@@ -126,7 +138,6 @@ google_mobility_func <- function(df){
 ##### Get Google Data and Combine them in one sheet
 google_mobility_us_2021 <- google_mobility_func(read.csv("data/2021_US_Region_Mobility_Report.csv"))
 google_mobility_us_2020 <-  google_mobility_func(read.csv("data/2020_US_Region_Mobility_Report.csv"))
-
 google_mobility_us_states  <- rbind(google_mobility_us_2021,  google_mobility_us_2020)
 
 ```
@@ -217,12 +228,25 @@ BTS_transportation_data_by_date <- BTS_transportation_data %>%
   select(Province_State,event_date,Staying.at.Home, Not.Staying.at.Home,Trips)
 ```
 
+#### <span style="color:darkBlue">Govt Policy Tracker Data</span>
+
+```{r message=FALSE, warning=FALSE}
+govt_tracker_data <- read.csv("data/OxCGRT_US_latest.csv")
+govt_tracker_data_filter <- govt_tracker_data %>% 
+  filter(Jurisdiction=='STATE_WIDE') %>%
+  mutate(Date = as.character(Date)) %>%
+  mutate(event_date=as.Date(Date, format = "%Y%m%d")) %>%
+  select(RegionName,event_date,EconomicSupportIndex,ContainmentHealthIndex,GovernmentResponseIndex,StringencyIndex,ConfirmedCases,ConfirmedDeaths)
+
+```
+
 
 ####  <span style="color:darkBlue">Lets Unify the data</span>
 
   * Joined the Google, Apple and BTS data with main Covid Data leveraging left join
   * To reduce noise and smooth time series data, I have further smoothed it up by applying rolling mean
   * Further cleaned up data by removing redundant fields
+  * Merged the Govt Policy Data into Google and BTS data. 
 
 ```{r message=FALSE, warning=FALSE}
 
@@ -241,7 +265,27 @@ joined_mobility <- left_join(covid_data_with_google,BTS_data,by= c("Province_Sta
    mutate(transit=zoo::rollmean(transit, k = 7, fill = "extend"), 
          walking=zoo::rollmean(walking, k = 7, fill = "extend"),
          driving=zoo::rollmean(driving, k = 7, fill = "extend"))
-  
+
+govt_policy_google <- left_join(govt_tracker_data_filter, covid_data_with_google,by= c("RegionName" ="Province_State", "event_date"="event_date"))
+
+govt_policy_mobility <-govt_policy_google %>%
+  group_by(event_date)%>%
+  filter(event_date >'2020-02-29') %>%
+  summarise(ContainmentHealthIndex=mean(
+      ContainmentHealthIndex,na.rm=TRUE),
+transit=mean(
+transit_g,na.rm=TRUE),
+workplace=mean(
+workplace,na.rm=TRUE),
+GovernmentResponseIndex=mean(
+  GovernmentResponseIndex,na.rm=TRUE),
+StringencyIndex=mean(
+  StringencyIndex,na.rm=TRUE),
+parks= mean(parks,na.rm=TRUE)
+)
+
+govt_policy_mobility_bts <- left_join(govt_policy_mobility, BTS_transportation_data_by_date,by= c("event_date"="event_date"))
+
 ```
 
 ###  <span style="color:darkBlue">Data Visualization</span>
@@ -251,7 +295,6 @@ joined_mobility <- left_join(covid_data_with_google,BTS_data,by= c("Province_Sta
 * Visualization around movement of People based on BTS data. 
 
 ```{r message=FALSE, warning=FALSE}
-
 ggplot(data=BTS_transportation_data_by_date, aes(x=event_date, y=pop_stay_at_home)) +
   geom_line(color="#69b3a2", size=1, alpha=0.9)+
   geom_smooth(se=TRUE)+
@@ -269,15 +312,79 @@ ggplot(data=BTS_transportation_data_by_date, aes(x=event_date, y=trips)) +
   geom_smooth(se=TRUE)+
   theme_ipsum() +
   ggtitle("# of Trips")
+```
+  
+  * As pandemic threat increased  number of people traveling decreased so did the people who stayed home. With ease out of restriction, traffic started to pickup.
+
+
+#### <span style="color:darkBlue">Govt Poilyc and Transits<span>
+  
+  *  Normalized the data to streamline the scale
+  
+```{r message=FALSE, warning=FALSE}
+govt_tracker_data_long <- govt_tracker_data_filter %>%
+  group_by(event_date) %>%
+  summarise("Economic Support Index"= mean(EconomicSupportIndex, na.rm=TRUE),
+            "Containmental Health Index"= mean(ContainmentHealthIndex, na.rm=TRUE),
+            "Govt Response Index"= mean(GovernmentResponseIndex ,na.rm=TRUE),
+            "Stringency Index"=mean(StringencyIndex ,na.rm=TRUE)) %>%
+    pivot_longer(cols = 2:ncol(.),names_to = "Policy", values_to = "Policy_Index") 
+  
+ggplot(data=govt_tracker_data_long, aes(x=event_date, y=Policy_Index,color = Policy)) +
+ geom_line()+
+  ggtitle("Mean Govt Policy Index Over time")
+
+govt_norm <- govt_policy_mobility_bts %>%   
+  remove_rownames %>%   
+  column_to_rownames(var="event_date")
+
+govt_norm_data <- scale(govt_norm) 
+
+govt_policy_transit_df <-tibble::rownames_to_column(as.data.frame(govt_norm_data), "event_date") %>%
+  mutate(event_date= as.Date(event_date, format = "%Y-%m-%d"))
+
+ggplot(govt_policy_transit_df, aes(x=event_date)) + 
+  geom_line(aes(y= transit,color = "a"))+
+  theme_ipsum() +
+  labs(x = 'Dates',y='Index')+
+  ggtitle("GOVT Response Index vs Transit")+
+  geom_line(aes(y = GovernmentResponseIndex, color="c")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  geom_hline(yintercept=0,linetype="dashed")+
+  scale_color_discrete(name = "Legends", labels = c("Transit Mobility", "GovernmentResponseIndex"))
+
+
+ggplot(govt_policy_transit_df, aes(x=event_date)) + 
+  geom_line(aes(y= pop_stay_at_home,color = "a"))+
+  theme_ipsum() +
+  labs(x = 'Dates',y='Index')+
+  ggtitle("ContainmentHealthIndex vs Pop Staying and Not Staying Home")+
+  geom_line(aes(y = ContainmentHealthIndex,color="b"), size=1, alpha=0.9) +
+  geom_line(aes(y= pop_not_stay_at_home,color = "c"))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  geom_hline(yintercept=0,linetype="dashed")+
+  scale_color_discrete(name = "Legends", labels = c("Population Staying at Home", "ContainmentHealthIndex", "Population Not Staying at Home"))
+
+
+ggplot(govt_policy_transit_df, aes(x=event_date)) + 
+  geom_line(aes(y= parks,color = "a"))+
+  theme_ipsum() +
+  labs(x = 'Dates',y='Index')+
+  ggtitle("Containment Health Index vs Park and Workplace Mobility")+
+  geom_line(aes(y = GovernmentResponseIndex,color="b"), size=1, alpha=0.9) +
+  geom_line(aes(y= workplace,color = "c"))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  geom_hline(yintercept=0,linetype="dashed")+
+  scale_color_discrete(name = "Legends", labels = c("Parks Mobility", "Government Response Index", "Workplace  Mobility"))
 
 
 ```
-  * This doesnt come as a surprise as trend has been downwards and then started to pick up for folks who did not stay home
-
-
-Top 5 States with Covid cases(Mean) overall (This is to take the vector and do the mobility analysis)
+    
+    * Clearly Govt Policies and Containment Health actions had a major impact on workplaces and Transit, with lockdowns and other restrictions, people stayed home more and usage of Transit was significantly down. 
+    * Interestly, people preferred to go to Park and Recreation. Mainly due to low threat of virus to get spread outdoors
 
 ```{r message=FALSE, warning=FALSE}
+##Top 5 States with Covid cases(Mean) overall (This is to take the vector and do the mobility analysis)
 topcovid_data_mobility <- joined_mobility%>%
   group_by(Province_State) %>%
   summarise(cases=mean(actuals.cases,na.rm = TRUE)) %>%
@@ -287,12 +394,10 @@ topcovid_data_mobility <- joined_mobility%>%
 
 mobility_data_top_5 <- joined_mobility %>%
   filter(Province_State %in% topcovid_data_mobility$Province_State)
-
 ```
 
 #### <span style="color:darkBlue">Trend from Google Data for Top States by cases</span>
 ```{r message=FALSE, warning=FALSE}
-
 ggplot(mobility_data_top_5, aes(x=event_date)) + 
   geom_line(aes(y= transit_g,color = "a"))+ facet_wrap(~ Province_State) +
   labs(x = 'Dates',y='Mobility Index')+
@@ -311,7 +416,6 @@ ggplot(mobility_data_top_5, aes(x=event_date)) +
 
 #### <span style="color:darkBlue">Trend from Google Data for Top States by cases (Cont.)</span>
 ```{r message=FALSE, warning=FALSE}
-
 ggplot(mobility_data_top_5, aes(x=event_date)) + 
   geom_line(aes(y= residential,color = "a"))+ facet_wrap(~ Province_State) +
   labs(x = 'Dates',y='Mobility Index')+
@@ -322,6 +426,7 @@ ggplot(mobility_data_top_5, aes(x=event_date)) +
   geom_hline(yintercept=0,linetype="dashed")+
   scale_color_discrete(name = "Mobility Types", labels = c("Residential", "Workplace","Covid Case Density"))
 ``` 
+   
    * Workplace commute has significantly took at hit as most of the offices and businesses were closed and people have explored work from home option, However it has started to     get picked up lately as cases are going down.
    * Residential mobility was consistent throughout.
    
@@ -360,7 +465,6 @@ joined_mobility_normalized <- prepare_joined_mobility %>%
   remove_rownames %>% 
   column_to_rownames(var="rowCol") %>%
   scale(.)
-
 
 cholor_mobility_df <- tibble::rownames_to_column(as.data.frame(joined_mobility_normalized), "rowCol") %>%
   separate(rowCol, c("event_date", "Province_State"),"#") %>%
@@ -403,8 +507,7 @@ cholro_cases <- function(df,x,y){
 
 covid_data_cases_first_6_c <- cholro_cases(cholor_mobility_df,"2020-03-01","2020-09-01")
 covid_data_cases_next_6_c <- cholro_cases(cholor_mobility_df,"2020-09-01","2021-04-01")
-
-
+## ChoropletMaps preparation
 c = StateChoropleth$new(covid_data_mobility_first_6_i)
 c$title = "Mar20-Oct20 At Home"
 c$set_num_colors(7)
@@ -452,7 +555,7 @@ grid.arrange(IndooorMobility2020, IndooorMobility2021,OutdoorMobiility2020,Outdo
 
 ```
 
-#### <span style="color:darkBlue">Overall US Mobility against Case Density</span
+#### <span style="color:darkBlue">Overall US Mobility against Case Density</span>
 
   * Summarized the data by month and normalized the scale to get the consistency in scale
 
@@ -478,16 +581,11 @@ df <-tibble::rownames_to_column(as.data.frame(covid_norm_data), "event_date") %>
 ggplot(df,aes(x=event_date,y = activity_index,color=activity))+
   geom_line()+  ggtitle("How Cases have unfolded in response to Mobility")+  labs(x = "Dates",y="Activity Index")+
   theme_ipsum() 
-
-
 ```
   
 ### <span style="color:darkBlue">Conclusion</span>
   
   We all know that Covid has impacted all wakes of life from all the visualization and post data wrangling, it is much evident that communities have tweaked behavior during peak of COVID times, people refrained from using public transport, preferred more outdoor activities. Workplace mobility was decreased significantly as well. Interestingly residential mobility remained consistent which might be an attribution that people mostly traveled between residential address and grocery or parks. There was not much dip in grocery and pharma which is understandable as demand remained consistent except initial days of COVID. 
-  From apple transportation data, people preferred driving which is unusual for cities with mass transit. 
-  
-### <span style="color:darkBlue">Opportunity</span>
-  
-  This analysis can be merged with Govt. Policies data and additional sources as weather, census , demographic & social media trends to draw decisions and shape further policy programs. Further due diligence of data points will be helpful to attain focus areas to battle such pandemics. 
+  Additionally States policies have widely impacted the mobility, Govt lockdowns and other policy action were clearly had an impact.
+  From apple transportation data, people preferred driving which is unusual for cities with mass transit.
   
