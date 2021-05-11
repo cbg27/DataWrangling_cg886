@@ -28,7 +28,7 @@ h4.author { /* Header 4 - and the author and data headers use this too  */
 
 #### <span style="color:darkBlue">Project Description</span>
 
-Within months, COVID-19 went from an epidemic to a pandemic. From the first identified case in December 2019 and wide impact visibly considered from March especially in US - there were many precautions and government orders put in place. People and communities have responded differently to such changes/developments especially mobility and transportation. Whilst we are well aware of the widespread usage of the analytics produced by John Hopkins, merging this data with other sources might provide more insight around the efforts being put in flattening the curve. My effort will be to unify the data and source them to put forward summary and stats to get better insights and perspective around all the initiatives - How mobility, stay at home, movement restrictions were perceived. Supplement this data with visualizations to explain the effectiveness around all the efforts. Aim is to get deeper into insights by collating data from various sources, clean them up and perform analysis.
+Within months, COVID-19 went from an epidemic to a pandemic. From the first identified case in December 2019 and wide impact visibly considered from March especially in US - there were many precautions and government orders put in place. People and communities have responded differently to such changes/developments especially mobility and transportation. Whilst we are well aware of the widespread usage of the analytics produced by various COVID data, merging the data with other sources might provide more insight around the efforts being put in flattening the curve. My effort will be to unify the data and source them to put forward summary and stats to get better insights and perspective around all the initiatives - How mobility, stay at home, movement restrictions were perceived. Supplement this data with visualizations to explain the effectiveness around all the efforts. Aim is to get deeper into insights by collating data from various sources, clean them up and perform analysis.
 
 #### <span style="color:darkBlue">Data</span>
 
@@ -51,7 +51,6 @@ date | date of an event
 
 Reference https://www.google.com/covid19/mobility/
 
-    
   * _*Apple Mobility Data*_ - Apple mobility Data 
   
 Apple Sheet element  | Definition 
@@ -118,7 +117,6 @@ library(hrbrthemes)
 
 ###  <span style="color:darkBlue">Data Wrangling</sapn>
 
-
 #### <span style="color:darkBlue">Function</span>
 ```{r}
 #### Function to clean up Google sheet data
@@ -172,7 +170,6 @@ apple_mobility <- read.csv("data/applemobilitytrends.csv") %>%
 
 ```{r message=FALSE, warning=FALSE}
 covid_data_metrics <- read.csv("https://api.covidactnow.org/v2/states.timeseries.csv?apiKey=4fa5a2a58b3a41cdb8023cc0c5ab1ea8")
-
 covid_data_metrics_refined <- covid_data_metrics %>%
   mutate(event_date=as.Date(date, format = "%Y-%m-%d"),Province_State=abbr2state(state)) %>%
   select(event_date,Province_State,actuals.cases, actuals.deaths ,actuals.newDeaths,metrics.caseDensity,metrics.infectionRate) %>%
@@ -180,7 +177,6 @@ covid_data_metrics_refined <- covid_data_metrics %>%
 ```
 
 #### <span style="color:darkBlue">Transportation Data from BTS </span>
-
   * Filter the date at State Level
   * Mutate to append date type column event date
   * converted US state code to Province State
@@ -191,7 +187,6 @@ covid_data_metrics_refined <- covid_data_metrics %>%
   * Unnest the date to get individual row
 
 ```{r message=FALSE, warning=FALSE}
-
 transportation_data <- read.socrata(
   "https://data.bts.gov/resource/w96p-f2qv.json?level=State",
   app_token = "ejkHyMHa8hKGhqxanhfhiONBq",
@@ -316,7 +311,6 @@ ggplot(data=BTS_transportation_data_by_date, aes(x=event_date, y=trips)) +
   
   * As pandemic threat increased  number of people traveling decreased so did the people who stayed home. With ease out of restriction, traffic started to pickup.
 
-
 #### <span style="color:darkBlue">Govt Poilyc and Transits<span>
   
   *  Normalized the data to streamline the scale
@@ -353,7 +347,6 @@ ggplot(govt_policy_transit_df, aes(x=event_date)) +
   geom_hline(yintercept=0,linetype="dashed")+
   scale_color_discrete(name = "Legends", labels = c("Transit Mobility", "GovernmentResponseIndex"))
 
-
 ggplot(govt_policy_transit_df, aes(x=event_date)) + 
   geom_line(aes(y= pop_stay_at_home,color = "a"))+
   theme_ipsum() +
@@ -365,7 +358,6 @@ ggplot(govt_policy_transit_df, aes(x=event_date)) +
   geom_hline(yintercept=0,linetype="dashed")+
   scale_color_discrete(name = "Legends", labels = c("Population Staying at Home", "ContainmentHealthIndex", "Population Not Staying at Home"))
 
-
 ggplot(govt_policy_transit_df, aes(x=event_date)) + 
   geom_line(aes(y= parks,color = "a"))+
   theme_ipsum() +
@@ -376,8 +368,6 @@ ggplot(govt_policy_transit_df, aes(x=event_date)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))+
   geom_hline(yintercept=0,linetype="dashed")+
   scale_color_discrete(name = "Legends", labels = c("Parks Mobility", "Government Response Index", "Workplace  Mobility"))
-
-
 ```
     
     * Clearly Govt Policies and Containment Health actions had a major impact on workplaces and Transit, with lockdowns and other restrictions, people stayed home more and usage of Transit was significantly down. 
